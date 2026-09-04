@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Gestor de Banca{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header-inner">
+      <a class="app-title" href="/">
+        Gestor de Banca
+        <small>Gerador de Múltiplas</small>
+      </a>
+      <nav class="app-nav">
+        <a href="/" data-nav="dashboard">Painel</a>
+        <a href="/bankroll-page" data-nav="bankroll">Banca</a>
+        <a href="/generator-page" data-nav="generator">Gerador</a>
+        <a href="/cycle-page" data-nav="cycle">Ciclo</a>
+        <a href="/history-page" data-nav="history">Histórico</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Marca o link de navegação ativo com base no caminho atual.
+    (function () {
+      var path = window.location.pathname;
+      var map = {
+        "/": "dashboard",
+        "/bankroll-page": "bankroll",
+        "/generator-page": "generator",
+        "/cycle-page": "cycle",
+        "/history-page": "history",
+      };
+      var current = map[path];
+      if (!current) return;
+      document.querySelectorAll("nav.app-nav a[data-nav]").forEach(function (a) {
+        if (a.getAttribute("data-nav") === current) {
+          a.classList.add("active");
+        }
+      });
+    })();
+
+    // Utilitário simples de formatação de moeda em BRL, usado pelas páginas.
+    function formatBRL(value) {
+      var n = Number(value);
+      if (Number.isNaN(n)) n = 0;
+      return "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    // Utilitário simples de formatação de percentual (recebe valor já em %, ex. 8.3).
+    function formatPercent(value, casas) {
+      var n = Number(value);
+      if (Number.isNaN(n)) n = 0;
+      var digits = (typeof casas === "number") ? casas : 1;
+      return n.toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + "%";
+    }
+
+    // O backend serializa datetimes "naive" (ex.: "2026-09-03T20:00:00",
+    // sem "Z" nem offset) — mas são sempre instantes em UTC de verdade
+    // (datetime.utcnow() no servidor, ou já convertidos pra UTC antes de
+    // salvar). Sem isso o JS trataria a string como hora LOCAL em vez de
+    // UTC, adiantando a exibição em várias horas conforme o fuso do
+    // usuário (ex.: um jogo às 23h UTC apareceria como "23h" local, quando
+    // na verdade é 20h no Brasil). Se a string já vier com fuso explícito,
+    // não mexe.
+    function parseServerDate(isoString) {
+      if (!isoString) return null;
+      var hasTz = /[zZ]|[+-]\d{2}:\d{2}$/.test(isoString);
+      var d = new Date(hasTz ? isoString : isoString + "Z");
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    // Utilitário simples de formatação de data/hora em pt-BR.
+    function formatDateTime(isoString) {
+      var d = parseServerDate(isoString);
+      if (!d) return "—";
+      return d.toLocaleString("pt-BR");
+    }
+
+    // ---------------------------------------------------------------------
+    // Utilitários de "dia do jogo" (usados em Gerador, Painel e Histórico
+    // para agrupar/filtrar odds e pernas por data de calendário LOCAL do
+    // navegador, evitando qualquer ambiguidade de fuso horário).
+    // ---------------------------------------------------------------------
+
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    // Chave estável "YYYY-MM-DD" do dia de calendário LOCAL de um Date.
+    function localDayKey(d) {
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    }
+
+    // Rótulo amigável para uma data/hora vinda do backend: "Hoje", "Amanhã"
+    // ou "seg, 05/09" — já compensando o fuso (ver `parseServerDate`).
+    function dayLabel(isoString) {
+      var d = parseServerDate(isoString);
+      if (!d) return "Sem data definida";
+      var today = new Date();
+      var tomorrow = new Date();
+      tomorrow.setDate(today.getDate() + 1);
+      if (localDayKey(d) === localDayKey(today)) return "Hoje";
+      if (localDayKey(d) === localDayKey(tomorrow)) return "Amanhã";
+      return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+    }
+
+    // Mesma coisa que `dayLabel`, mas a partir de uma chave "YYYY-MM-DD" já
+    // conhecida (dia de calendário LOCAL) — usado ao agrupar/filtrar a
+    // própria lista de odds em cache, onde não faz sentido reprocessar fuso.
+    function dayLabelFromKey(key) {
+      var today = new Date();
+      var tomorrow = new Date();
+      tomorrow.setDate(today.getDate() + 1);
+      if (key === localDayKey(today)) return "Hoje";
+      if (key === localDayKey(tomorrow)) return "Amanhã";
+      var parts = key.split("-").map(Number);
+      var d = new Date(parts[0], parts[1] - 1, parts[2]);
+      return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+    }
+
+    // A partir de uma chave "YYYY-MM-DD" (dia de calendário local), calcula o
+    // intervalo [meia-noite local desse dia, meia-noite local do dia seguinte)
+    // como instantes reais (ISO/UTC) — é isso que vai no filtro do gerador,
+    // para comparar instantes exatos em vez de "datas" ambíguas entre fusos.
+    function dayBoundsFromKey(key) {
+      var parts = key.split("-").map(Number);
+      var start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+      var end = new Date(parts[0], parts[1] - 1, parts[2] + 1, 0, 0, 0, 0);
+      return { from: start.toISOString(), to: end.toISOString() };
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,518 @@
+{% extends "base.html" %}
+
+{% block title %}Gerador de Múltiplas — Gestor de Banca{% endblock %}
+
+{% block content %}
+<h1>Gerador de Múltiplas</h1>
+<p class="page-subtitle">
+  O sistema monta uma sugestão de múltipla com base nas odds em cache (menor odd primeiro,
+  no máximo 1 perna por evento). Nada é apostado automaticamente — você decide e aposta
+  manualmente na casa de apostas.
+</p>
+
+<div id="generator-error" class="banner banner-danger hidden"></div>
+
+<div id="no-odds-banner" class="banner banner-warning hidden">
+  ⚠️ Você ainda não tem nenhuma odd cadastrada — por isso o gerador não consegue montar nada.
+  O sistema <strong>nunca busca odds sozinho na Betano/Bet365</strong> (login automático nessas
+  casas violaria os termos de uso delas e arrisca banir sua conta). Você tem duas opções:
+  <ol>
+    <li>Olhe a odd no site/app da casa de apostas e cadastre manualmente na seção
+      "Adicionar odds manuais" logo abaixo — leva menos de 1 minuto por jogo.</li>
+    <li>Configure uma chave gratuita da <a href="https://the-odds-api.com/" target="_blank" rel="noopener">The Odds API</a>
+      no arquivo <code>.env</code> (variável <code>ODDS_API_KEY</code>) — aí o botão "Atualizar via API"
+      no Painel busca odds reais automaticamente para você (cobertura completa para resultado/dupla
+      chance e gols; mercados de nicho como cantos ainda dependem de entrada manual).</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Gerar sugestão</h2>
+  <form id="generator-form" class="form-stack">
+    <div class="form-row">
+      <label for="tier-select">Tier da múltipla</label>
+      <select id="tier-select" name="tier" required>
+        <option value="25">25x</option>
+        <option value="50">50x</option>
+        <option value="100">100x</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="event-date-filter">Dia do jogo</label>
+      <select id="event-date-filter" name="event_date">
+        <option value="">Todos os dias (padrão)</option>
+      </select>
+      <span class="form-hint">Filtra o gerador para usar só pernas de jogos daquele dia. As opções aparecem conforme você cadastra odds com data preenchida.</span>
+    </div>
+    <div class="form-row">
+      <label for="stake-input">Stake (R$)</label>
+      <input type="number" id="stake-input" name="stake" step="0.01" min="0.01" required>
+      <span class="form-hint" id="stake-hint">Sugestão automática: % da unidade sobre o saldo atual da banca.</span>
+    </div>
+    <button type="submit" id="generate-btn">Gerar Múltipla</button>
+  </form>
+</div>
+
+<div id="preview-section" class="card hidden">
+  <h2>Prévia da múltipla sugerida</h2>
+  <p id="day-cascade-notice" class="banner banner-info hidden"></p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Dia do jogo</th>
+          <th>Liga</th>
+          <th>Evento</th>
+          <th>Mercado</th>
+          <th>Seleção</th>
+          <th>Odd</th>
+          <th>Probabilidade implícita</th>
+        </tr>
+      </thead>
+      <tbody id="preview-legs-body"></tbody>
+    </table>
+  </div>
+
+  <div class="grid mt-2">
+    <div class="card stat-card">
+      <p class="stat-label">Odd total</p>
+      <p class="stat-value" id="preview-total-odds">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Retorno potencial</p>
+      <p class="stat-value" id="preview-potential-return">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Stake</p>
+      <p class="stat-value" id="preview-stake">—</p>
+    </div>
+  </div>
+
+  <div class="probability-highlight">
+    <p class="probability-value" id="preview-combined-probability">Probabilidade real combinada: —</p>
+    <p>— isso significa que, historicamente, esse tipo de combinação erra a maioria das vezes.</p>
+  </div>
+
+  <div class="disclaimer-box">
+    ⚠️ Isso NÃO é uma aposta segura. É uma sugestão baseada nas odds atuais. Você decide se
+    aposta, e a aposta é sempre feita manualmente por você na casa de apostas.
+  </div>
+
+  <button type="button" id="confirm-btn" class="btn-success">Confirmar (eu já apostei manualmente)</button>
+  <p id="confirm-success" class="banner banner-info hidden mt-2"></p>
+</div>
+
+<hr class="section-divider">
+
+<div class="card">
+  <h2>Adicionar odds manuais</h2>
+  <p class="page-subtitle">
+    Registre aqui odds que você coletou manualmente na Betano, Bet365 ou outra casa de
+    apostas. O sistema nunca acessa nenhuma casa de apostas por conta própria.
+  </p>
+  <div id="odds-manual-error" class="banner banner-danger hidden"></div>
+  <form id="odds-manual-form" class="form-stack">
+    <div class="form-row">
+      <label for="odds-league">Liga</label>
+      <select id="odds-league" name="league" required>
+        <option value="Brasileirão Série A">Brasileirão Série A</option>
+        <option value="Champions League">Champions League</option>
+        <option value="Libertadores">Libertadores</option>
+        <option value="Premier League">Premier League</option>
+        <option value="La Liga">La Liga</option>
+        <option value="Serie A">Serie A</option>
+        <option value="Bundesliga">Bundesliga</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="odds-event-name">Evento (ex.: "Time A vs Time B")</label>
+      <input type="text" id="odds-event-name" name="event_name" placeholder="Time A vs Time B" required>
+    </div>
+    <div class="form-row">
+      <label for="odds-market-type">Tipo de mercado</label>
+      <select id="odds-market-type" name="market_type" required>
+        <option value="under_goals">Menos de X.5 gols na partida</option>
+        <option value="double_chance_favorite">Dupla chance no favorito claro</option>
+        <option value="under_corners">Menos de X.5 cantos na partida</option>
+        <option value="under_cards">Menos de X.5 cartões na partida</option>
+        <option value="btts_no">Ambas marcam - Não</option>
+        <option value="team_not_lose">Time não perde (dupla chance / empate anula)</option>
+      </select>
+      <span class="form-hint">A descrição da seleção é livre — você pode digitar qualquer linha (ex.: "Menos de 14.5 cantos", "Menos de 3.5 cartões"), a categoria acima é só pra organizar.</span>
+    </div>
+    <div class="form-row">
+      <label for="odds-selection-description">Descrição da seleção</label>
+      <input type="text" id="odds-selection-description" name="selection_description" placeholder="ex.: Menos de 2.5 gols" required>
+    </div>
+    <div class="form-row">
+      <label for="odds-decimal">Odd decimal</label>
+      <input type="number" id="odds-decimal" name="odds_decimal" step="0.01" min="1.01" required>
+    </div>
+    <div class="form-row">
+      <label for="odds-event-start">Data e hora do jogo — opcional</label>
+      <input type="datetime-local" id="odds-event-start" name="event_start">
+      <span class="form-hint">Preencha para poder gerar múltiplas filtradas por dia (hoje, amanhã, ou uma data específica) no formulário acima.</span>
+    </div>
+    <button type="submit">Adicionar odd</button>
+  </form>
+  <p id="odds-manual-success" class="banner banner-info hidden mt-2"></p>
+
+  <h2 class="mt-2">Odds em cache</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Liga</th>
+          <th>Evento</th>
+          <th>Mercado</th>
+          <th>Seleção</th>
+          <th>Odd</th>
+          <th>Prob. implícita</th>
+          <th>Origem</th>
+          <th>Movimento</th>
+        </tr>
+      </thead>
+      <tbody id="cached-odds-body">
+        <tr><td colspan="8" class="empty-state">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="form-hint mt-1">As linhas são agrupadas por dia do jogo (com base no campo "Início do evento" de cada odd). Odds sem data ficam no grupo "Sem data definida" no final.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var MARKET_LABELS = {
+      "under_goals": "Menos de X.5 gols na partida",
+      "double_chance_favorite": "Dupla chance no favorito claro",
+      "under_corners": "Menos de X.5 cantos na partida",
+      "under_cards": "Menos de X.5 cartões na partida",
+      "btts_no": "Ambas marcam - Não",
+      "team_not_lose": "Time não perde (dupla chance / empate anula)",
+    };
+
+    var MOVEMENT_LABELS = {
+      "down": "▼ caiu",
+      "up": "▲ subiu",
+      "same": "— igual",
+    };
+
+    function movementBadgeHtml(movement) {
+      var key = movement || "new";
+      var label = MOVEMENT_LABELS[key] || "● novo";
+      return '<span class="badge badge-movement-' + key + '">' + label + '</span>';
+    }
+
+    var generatorError = document.getElementById("generator-error");
+    var previewSection = document.getElementById("preview-section");
+    var currentCombo = null; // guarda o exato preview retornado, para reenviar em /generator/confirm
+    var knownDayOrder = []; // dias (chave "YYYY-MM-DD") com odds em cache, em ordem crescente — atualizado por loadCachedOdds()
+
+    function showGeneratorError(msg) {
+      generatorError.textContent = msg;
+      generatorError.classList.remove("hidden");
+    }
+
+    function clearGeneratorError() {
+      generatorError.classList.add("hidden");
+      generatorError.textContent = "";
+    }
+
+    // Sugestão automática de stake: current_amount * unit_percent / 100, buscado de /bankroll.
+    async function loadStakeSuggestion() {
+      try {
+        var resp = await fetch("/bankroll");
+        if (!resp.ok) return;
+        var bankroll = await resp.json();
+        var suggested = bankroll.current_amount * bankroll.unit_percent / 100;
+        var stakeInput = document.getElementById("stake-input");
+        if (!stakeInput.value) {
+          stakeInput.value = suggested.toFixed(2);
+        }
+        document.getElementById("stake-hint").textContent =
+          "Sugestão automática: " + formatBRL(suggested) + " (" + formatPercent(bankroll.unit_percent, 1) +
+          " do saldo atual, " + formatBRL(bankroll.current_amount) + "). Você pode editar.";
+      } catch (err) {
+        // Se a banca não existir ainda, o usuário simplesmente digita o stake manualmente.
+      }
+    }
+
+    function renderPreview(combo) {
+      currentCombo = combo;
+
+      var tbody = document.getElementById("preview-legs-body");
+      tbody.innerHTML = combo.legs.map(function (leg) {
+        var dateCell = dayLabel(leg.event_start);
+        if (leg.event_start) {
+          dateCell += ' <span class="text-muted">' + formatDateTime(leg.event_start) + '</span>';
+        }
+        return "<tr>" +
+          "<td>" + dateCell + "</td>" +
+          "<td>" + leg.league + "</td>" +
+          "<td>" + leg.event_name + "</td>" +
+          "<td>" + (MARKET_LABELS[leg.market_type] || leg.market_type) + "</td>" +
+          "<td>" + leg.selection_description + "</td>" +
+          "<td>" + leg.odds_decimal.toFixed(2) + "</td>" +
+          "<td>" + formatPercent(leg.implied_probability * 100, 1) + "</td>" +
+          "</tr>";
+      }).join("");
+
+      document.getElementById("preview-total-odds").textContent = combo.total_odds.toFixed(2);
+      document.getElementById("preview-potential-return").textContent = formatBRL(combo.potential_return);
+      document.getElementById("preview-stake").textContent = formatBRL(combo.stake);
+
+      var combinedPercent = combo.combined_probability * 100;
+      document.getElementById("preview-combined-probability").textContent =
+        "Probabilidade real combinada: " + formatPercent(combinedPercent, 1);
+
+      document.getElementById("confirm-success").classList.add("hidden");
+      previewSection.classList.remove("hidden");
+    }
+
+    function previewPayload(tier, stake, dateKey) {
+      var payload = { tier: tier, stake: stake };
+      if (dateKey) {
+        var bounds = dayBoundsFromKey(dateKey);
+        payload.event_date_from = bounds.from;
+        payload.event_date_to = bounds.to;
+      }
+      return payload;
+    }
+
+    async function requestPreview(tier, stake, dateKey) {
+      var resp = await fetch("/generator/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(previewPayload(tier, stake, dateKey)),
+      });
+      var body = await resp.json().catch(function () { return {}; });
+      return { ok: resp.ok, body: body };
+    }
+
+    document.getElementById("generator-form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      clearGeneratorError();
+      previewSection.classList.add("hidden");
+
+      var tier = parseInt(document.getElementById("tier-select").value, 10);
+      var stake = parseFloat(document.getElementById("stake-input").value);
+      var requestedDateKey = document.getElementById("event-date-filter").value;
+
+      // Se um dia específico foi escolhido e não tiver odds suficientes,
+      // busca automaticamente nos próximos dias que já têm odds em cache
+      // (hoje -> amanhã -> depois de amanhã...), na ordem, em vez de só
+      // devolver um erro — o usuário só precisa saber que dia acabou
+      // sendo usado (mostrado em `day-cascade-notice` depois do preview).
+      var candidateDays = requestedDateKey
+        ? [requestedDateKey].concat(knownDayOrder.filter(function (k) { return k > requestedDateKey; }))
+        : [null];
+
+      var generateBtn = document.getElementById("generate-btn");
+      generateBtn.disabled = true;
+      try {
+        var result = null;
+        var usedDateKey = null;
+        for (var i = 0; i < candidateDays.length; i++) {
+          result = await requestPreview(tier, stake, candidateDays[i]);
+          if (result.ok) {
+            usedDateKey = candidateDays[i];
+            break;
+          }
+        }
+
+        if (!result.ok) {
+          var extra = candidateDays.length > 1
+            ? " Tentei também os próximos dias com odds em cache, mas nenhum teve odds suficientes."
+            : "";
+          showGeneratorError((result.body.detail || "Não foi possível gerar a múltipla.") + extra);
+          return;
+        }
+
+        var notice = document.getElementById("day-cascade-notice");
+        if (usedDateKey && usedDateKey !== requestedDateKey) {
+          notice.textContent =
+            "Não havia odds suficientes para " + dayLabelFromKey(requestedDateKey) +
+            " — esta múltipla usa " + dayLabelFromKey(usedDateKey) + " em vez disso.";
+          notice.classList.remove("hidden");
+        } else {
+          notice.classList.add("hidden");
+        }
+
+        renderPreview(result.body);
+      } catch (err) {
+        showGeneratorError("Erro de conexão ao gerar a múltipla.");
+      } finally {
+        generateBtn.disabled = false;
+      }
+    });
+
+    document.getElementById("confirm-btn").addEventListener("click", async function () {
+      if (!currentCombo) return;
+      clearGeneratorError();
+
+      var confirmBtn = document.getElementById("confirm-btn");
+      confirmBtn.disabled = true;
+      try {
+        var resp = await fetch("/generator/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(currentCombo),
+        });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showGeneratorError(errBody.detail || "Não foi possível registrar a aposta.");
+          return;
+        }
+        var bet = await resp.json();
+        var successMsg = document.getElementById("confirm-success");
+        successMsg.textContent =
+          "Aposta registrada no histórico (nº " + bet.id + ", status: pendente). " +
+          "Acompanhe e registre o resultado em Histórico depois de saber o desfecho.";
+        successMsg.classList.remove("hidden");
+      } catch (err) {
+        showGeneratorError("Erro de conexão ao registrar a aposta.");
+      } finally {
+        confirmBtn.disabled = false;
+      }
+    });
+
+    function showOddsManualError(msg) {
+      var el = document.getElementById("odds-manual-error");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+
+    document.getElementById("odds-manual-form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      document.getElementById("odds-manual-error").classList.add("hidden");
+      document.getElementById("odds-manual-success").classList.add("hidden");
+
+      var eventStartValue = document.getElementById("odds-event-start").value;
+      var payload = {
+        league: document.getElementById("odds-league").value,
+        event_name: document.getElementById("odds-event-name").value,
+        market_type: document.getElementById("odds-market-type").value,
+        selection_description: document.getElementById("odds-selection-description").value,
+        odds_decimal: parseFloat(document.getElementById("odds-decimal").value),
+        event_start: eventStartValue ? new Date(eventStartValue).toISOString() : null,
+      };
+
+      try {
+        var resp = await fetch("/odds/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showOddsManualError(errBody.detail || "Não foi possível adicionar a odd.");
+          return;
+        }
+        document.getElementById("odds-manual-form").reset();
+        var successMsg = document.getElementById("odds-manual-success");
+        successMsg.textContent = "Odd adicionada ao cache com sucesso.";
+        successMsg.classList.remove("hidden");
+        loadCachedOdds();
+      } catch (err) {
+        showOddsManualError("Erro de conexão ao adicionar a odd.");
+      }
+    });
+
+    function entryRowHtml(entry) {
+      var implied = (1 / entry.odds_decimal) * 100;
+      var oddCell = entry.odds_decimal.toFixed(2);
+      if (entry.previous_odds_decimal != null) {
+        oddCell += ' <span class="text-muted">(era ' + entry.previous_odds_decimal.toFixed(2) + ')</span>';
+      }
+      return "<tr>" +
+        "<td>" + entry.league + "</td>" +
+        "<td>" + entry.event_name + "</td>" +
+        "<td>" + (MARKET_LABELS[entry.market_type] || entry.market_type) + "</td>" +
+        "<td>" + entry.selection_description + "</td>" +
+        "<td>" + oddCell + "</td>" +
+        "<td>" + formatPercent(implied, 1) + "</td>" +
+        "<td>" + entry.source + "</td>" +
+        "<td>" + movementBadgeHtml(entry.movement) + "</td>" +
+        "</tr>";
+    }
+
+    // Agrupa as odds por dia de calendário local (com base em `event_start`)
+    // e, de quebra, alimenta o seletor "Dia do jogo" do formulário do gerador
+    // com as datas encontradas — é assim que o usuário passa a ver e escolher
+    // entre jogos de hoje, amanhã, ou qualquer outro dia futuro já cadastrado.
+    function groupEntriesByDay(entries) {
+      var groups = {}; // key "YYYY-MM-DD" ou "__no_date__" -> lista de entries
+      var order = [];
+      entries.forEach(function (entry) {
+        var parsed = entry.event_start ? parseServerDate(entry.event_start) : null;
+        var key = parsed ? localDayKey(parsed) : "__no_date__";
+        if (!groups[key]) {
+          groups[key] = [];
+          order.push(key);
+        }
+        groups[key].push(entry);
+      });
+      order.sort(function (a, b) {
+        if (a === "__no_date__") return 1;
+        if (b === "__no_date__") return -1;
+        return a < b ? -1 : a > b ? 1 : 0;
+      });
+      return { groups: groups, order: order };
+    }
+
+    function updateDateFilterOptions(order) {
+      var select = document.getElementById("event-date-filter");
+      var previousValue = select.value;
+      select.innerHTML = '<option value="">Todos os dias (padrão)</option>';
+      knownDayOrder = order.filter(function (key) { return key !== "__no_date__"; });
+      knownDayOrder.forEach(function (key) {
+        var option = document.createElement("option");
+        option.value = key;
+        option.textContent = dayLabelFromKey(key);
+        select.appendChild(option);
+      });
+      if (order.indexOf(previousValue) !== -1) {
+        select.value = previousValue;
+      }
+    }
+
+    async function loadCachedOdds() {
+      var tbody = document.getElementById("cached-odds-body");
+      try {
+        var resp = await fetch("/odds/cached");
+        if (!resp.ok) {
+          tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Não foi possível carregar as odds.</td></tr>';
+          return;
+        }
+        var entries = await resp.json();
+        document.getElementById("no-odds-banner").classList.toggle("hidden", entries.length > 0);
+        if (entries.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Nenhuma odd em cache ainda. Adicione manualmente acima.</td></tr>';
+          updateDateFilterOptions([]);
+          return;
+        }
+
+        var grouped = groupEntriesByDay(entries);
+        updateDateFilterOptions(grouped.order);
+
+        tbody.innerHTML = grouped.order.map(function (key) {
+          var groupEntries = grouped.groups[key];
+          var label = key === "__no_date__" ? "Sem data definida" : dayLabelFromKey(key);
+          var headerHtml =
+            '<tr class="group-header"><td colspan="8">' + label +
+            ' <span class="text-muted">(' + groupEntries.length + (groupEntries.length === 1 ? " jogo" : " jogos") + ')</span></td></tr>';
+          return headerHtml + groupEntries.map(entryRowHtml).join("");
+        }).join("");
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Erro de conexão.</td></tr>';
+      }
+    }
+
+    loadStakeSuggestion();
+    loadCachedOdds();
+  })();
+</script>
+{% endblock %}

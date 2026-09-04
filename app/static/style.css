@@ -1,0 +1,563 @@
+/* =========================================================================
+   Gestor de Banca + Gerador de Múltiplas — estilos globais
+   CSS simples, sem framework externo, sem build step.
+   ========================================================================= */
+
+:root {
+  --color-bg: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-border: #e2e5ea;
+  --color-text: #1e2530;
+  --color-text-muted: #667085;
+  --color-primary: #2f5dd3;
+  --color-primary-dark: #1f45a8;
+  --color-primary-contrast: #ffffff;
+
+  --color-success: #1a8a4a;
+  --color-success-bg: #e7f6ec;
+  --color-danger: #c0362c;
+  --color-danger-bg: #fbeae8;
+  --color-void: #6b7280;
+  --color-void-bg: #eef0f2;
+  --color-pending: #1c5fae;
+  --color-pending-bg: #e7f1fb;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --radius: 10px;
+  --container-max: 1080px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--color-primary);
+}
+
+/* ---------------------------------------------------------------------
+   Cabeçalho e navegação
+   --------------------------------------------------------------------- */
+
+header.app-header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header-inner {
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.app-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.app-title small {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+nav.app-nav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+nav.app-nav a {
+  text-decoration: none;
+  color: var(--color-text-muted);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+nav.app-nav a:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+nav.app-nav a.active {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+/* ---------------------------------------------------------------------
+   Layout geral
+   --------------------------------------------------------------------- */
+
+main.app-main {
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 4px;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 0 0 12px;
+}
+
+.page-subtitle {
+  color: var(--color-text-muted);
+  margin: 0 0 20px;
+  font-size: 0.95rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+/* ---------------------------------------------------------------------
+   Cards
+   --------------------------------------------------------------------- */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 18px 20px;
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.stat-card .stat-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  margin: 0 0 6px;
+}
+
+.stat-card .stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.stat-card .stat-value.positive {
+  color: var(--color-success);
+}
+
+.stat-card .stat-value.negative {
+  color: var(--color-danger);
+}
+
+.stat-card .stat-hint {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* ---------------------------------------------------------------------
+   Alertas / banners
+   --------------------------------------------------------------------- */
+
+.banner {
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  font-size: 0.92rem;
+  border: 1px solid transparent;
+}
+
+.banner-danger {
+  background: var(--color-danger-bg);
+  border-color: #f3c8c3;
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.banner-info {
+  background: var(--color-pending-bg);
+  border-color: #c7defa;
+  color: var(--color-pending);
+}
+
+.banner-warning {
+  background: #fff6e0;
+  border-color: #f2dfa0;
+  color: #8a6413;
+  font-weight: 600;
+}
+
+.banner-muted {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* ---------------------------------------------------------------------
+   Formulários
+   --------------------------------------------------------------------- */
+
+form.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 480px;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-row.form-row-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+input[type="text"],
+input[type="number"],
+input[type="datetime-local"],
+select,
+textarea {
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.form-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+button,
+.btn {
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+button:hover,
+.btn:hover {
+  background: var(--color-primary-dark);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.btn-secondary,
+.btn.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+button.btn-secondary:hover,
+.btn.btn-secondary:hover {
+  background: var(--color-bg);
+}
+
+button.btn-success {
+  background: var(--color-success);
+}
+
+button.btn-success:hover {
+  background: #146238;
+}
+
+button.btn-small {
+  padding: 6px 12px;
+  font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------------
+   Tabelas
+   --------------------------------------------------------------------- */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+thead th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid var(--color-border);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--color-bg);
+}
+
+tr.group-header td {
+  background: var(--color-bg);
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--color-text);
+  padding: 8px 10px;
+}
+
+tr.group-header:hover td {
+  background: var(--color-bg);
+}
+
+/* ---------------------------------------------------------------------
+   Badges de status
+   --------------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.badge-won {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge-lost {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.badge-void {
+  background: var(--color-void-bg);
+  color: var(--color-void);
+}
+
+.badge-pending {
+  background: var(--color-pending-bg);
+  color: var(--color-pending);
+}
+
+/* ---------------------------------------------------------------------
+   Odds ao vivo (painel) — indicador de movimento e gráfico de evolução
+   --------------------------------------------------------------------- */
+
+.badge-movement-down {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge-movement-up {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.badge-movement-same {
+  background: var(--color-void-bg);
+  color: var(--color-void);
+}
+
+.badge-movement-new {
+  background: var(--color-pending-bg);
+  color: var(--color-pending);
+}
+
+.odds-live-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.odds-live-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.balance-chart {
+  width: 100%;
+  height: 180px;
+  display: block;
+}
+
+/* ---------------------------------------------------------------------
+   Destaque de probabilidade combinada (gerador)
+   --------------------------------------------------------------------- */
+
+.probability-highlight {
+  background: #fff6e0;
+  border: 1px solid #f2dfa0;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 16px 0;
+}
+
+.probability-highlight .probability-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #8a6413;
+  margin: 0 0 4px;
+}
+
+.probability-highlight p {
+  margin: 0;
+  color: #6b501a;
+  font-size: 0.9rem;
+}
+
+.disclaimer-box {
+  background: var(--color-danger-bg);
+  border: 2px solid var(--color-danger);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 18px 0;
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+/* ---------------------------------------------------------------------
+   Utilitários
+   --------------------------------------------------------------------- */
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: 8px; }
+.mt-2 { margin-top: 16px; }
+.mb-2 { margin-bottom: 16px; }
+
+.hidden {
+  display: none !important;
+}
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 28px 0;
+}
+
+.legs-detail {
+  background: var(--color-bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.legs-detail ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.legs-detail li {
+  margin-bottom: 4px;
+}
+
+.empty-state {
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
+}
+
+.settle-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settle-form select {
+  width: auto;
+}
+
+@media (max-width: 640px) {
+  .app-header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  form.form-stack {
+    max-width: 100%;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

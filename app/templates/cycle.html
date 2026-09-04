@@ -1,0 +1,550 @@
+{% extends "base.html" %}
+
+{% block title %}Ciclo de Juros Compostos — Gestor de Banca{% endblock %}
+
+{% block content %}
+<h1>Ciclo de Juros Compostos</h1>
+<p class="page-subtitle">
+  Alternativa ao Gerador de Múltiplas: em vez de uma única múltipla gigante tentando bater um
+  multiplicador de odd de uma vez (probabilidade real baixa), aqui você faz uma SEQUÊNCIA de
+  apostas simples de odd baixa, reinvestindo o saldo inteiro da banca a cada rodada vencida —
+  até acumular o lucro-alvo em R$, ou perder uma rodada. Nada é apostado automaticamente — você
+  decide e aposta manualmente na casa de apostas, como em todo o resto do sistema.
+</p>
+
+<div id="cycle-error" class="banner banner-danger hidden"></div>
+
+<div class="disclaimer-box">
+  ⚠️ Cada rodada aposta <strong>100% do saldo atual da banca</strong> — bem mais arriscado que a
+  unidade normal (2-3%) usada no Gerador e nos ajustes manuais. Se uma rodada for perdida, o
+  ciclo inteiro (e o saldo que estava nele) é perdido junto. Use com uma parte pequena e
+  consciente da sua banca, e lembre-se: nenhuma sequência de odds baixas garante lucro — cada
+  rodada continua tendo sua própria chance real de falhar.
+</div>
+
+<div id="no-cycle-section" class="hidden">
+  <div class="card">
+    <h2>Iniciar novo ciclo</h2>
+    <form id="start-cycle-form" class="form-stack">
+      <div class="form-row">
+        <label for="target-profit-select">Lucro-alvo</label>
+        <select id="target-profit-select">
+          <option value="25">R$ 25,00</option>
+          <option value="50">R$ 50,00</option>
+          <option value="100">R$ 100,00</option>
+          <option value="custom">Outro valor...</option>
+        </select>
+      </div>
+      <div class="form-row hidden" id="custom-target-row">
+        <label for="target-profit-custom">Valor personalizado (R$)</label>
+        <input type="number" id="target-profit-custom" step="0.01" min="0.01">
+      </div>
+      <p class="form-hint" id="start-cycle-hint">Saldo atual da banca (vira a rodada 1): —</p>
+      <button type="submit">Iniciar Ciclo</button>
+    </form>
+  </div>
+</div>
+
+<div id="active-cycle-section" class="hidden">
+  <div class="grid">
+    <div class="card stat-card">
+      <p class="stat-label">Meta de lucro</p>
+      <p class="stat-value" id="cycle-target">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Saldo inicial do ciclo</p>
+      <p class="stat-value" id="cycle-starting">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Saldo atual da banca</p>
+      <p class="stat-value" id="cycle-current">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Lucro no ciclo</p>
+      <p class="stat-value" id="cycle-profit">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Rodada atual</p>
+      <p class="stat-value" id="cycle-round">—</p>
+    </div>
+  </div>
+
+  <div id="cycle-ended-banner" class="banner hidden">
+    <p id="cycle-ended-text"></p>
+    <button type="button" id="start-new-cycle-btn">Iniciar novo ciclo</button>
+  </div>
+
+  <div id="pending-round-card" class="card hidden">
+    <h2>Rodada pendente</h2>
+    <p id="pending-round-detail"></p>
+    <form id="settle-round-form" class="settle-form">
+      <select name="result">
+        <option value="won">Ganhou</option>
+        <option value="lost">Perdeu</option>
+        <option value="void">Anulada</option>
+      </select>
+      <button type="submit">Registrar resultado</button>
+    </form>
+  </div>
+
+  <div id="pick-round-card" class="card hidden">
+    <h2>Escolher perna para a próxima rodada</h2>
+    <p class="page-subtitle" id="pick-round-stake-hint">—</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Dia do jogo</th>
+            <th>Liga</th>
+            <th>Evento</th>
+            <th>Mercado</th>
+            <th>Seleção</th>
+            <th>Odd</th>
+            <th>Prob. implícita</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="pick-round-body">
+          <tr><td colspan="8" class="empty-state">Carregando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card mt-2" id="cash-out-card">
+    <button type="button" id="cash-out-btn" class="btn-secondary">Encerrar ciclo e guardar o lucro</button>
+    <p class="form-hint">Disponível quando não há rodada pendente. Guarda o que já foi ganho e libera pra iniciar um novo ciclo.</p>
+  </div>
+
+  <h2 class="mt-2">Rodadas deste ciclo</h2>
+  <div class="table-wrap card">
+    <table>
+      <thead>
+        <tr>
+          <th>Rodada</th>
+          <th>Jogo</th>
+          <th>Odd</th>
+          <th>Stake</th>
+          <th>Status</th>
+          <th>Retorno potencial</th>
+        </tr>
+      </thead>
+      <tbody id="rounds-body">
+        <tr><td colspan="6" class="empty-state">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2 class="mt-2">Histórico de ciclos</h2>
+<div class="table-wrap card">
+  <table>
+    <thead>
+      <tr>
+        <th>Início</th>
+        <th>Meta</th>
+        <th>Saldo inicial</th>
+        <th>Status</th>
+        <th>Encerrado em</th>
+      </tr>
+    </thead>
+    <tbody id="cycle-history-body">
+      <tr><td colspan="5" class="empty-state">Carregando...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var MARKET_LABELS = {
+      "under_goals": "Menos de X.5 gols na partida",
+      "double_chance_favorite": "Dupla chance no favorito claro",
+      "under_corners": "Menos de X.5 cantos na partida",
+      "under_cards": "Menos de X.5 cartões na partida",
+      "btts_no": "Ambas marcam - Não",
+      "team_not_lose": "Time não perde (dupla chance / empate anula)",
+    };
+
+    var STATUS_LABELS = {
+      "pending": "Pendente",
+      "won": "Ganhou",
+      "lost": "Perdeu",
+      "void": "Anulada",
+    };
+
+    function showError(msg) {
+      var el = document.getElementById("cycle-error");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+
+    function clearError() {
+      document.getElementById("cycle-error").classList.add("hidden");
+    }
+
+    document.getElementById("target-profit-select").addEventListener("change", function () {
+      document.getElementById("custom-target-row").classList.toggle("hidden", this.value !== "custom");
+    });
+
+    async function loadStartCycleHint() {
+      try {
+        var resp = await fetch("/bankroll");
+        if (!resp.ok) return;
+        var bankroll = await resp.json();
+        document.getElementById("start-cycle-hint").textContent =
+          "Saldo atual da banca (vira a rodada 1): " + formatBRL(bankroll.current_amount);
+      } catch (err) {
+        // banca pode não existir ainda — o backend vai recusar e explicar.
+      }
+    }
+
+    document.getElementById("start-cycle-form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      clearError();
+      var select = document.getElementById("target-profit-select");
+      var targetProfit = select.value === "custom"
+        ? parseFloat(document.getElementById("target-profit-custom").value)
+        : parseFloat(select.value);
+
+      try {
+        var resp = await fetch("/cycle/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_profit: targetProfit }),
+        });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showError(errBody.detail || "Não foi possível iniciar o ciclo.");
+          return;
+        }
+        await loadPage();
+      } catch (err) {
+        showError("Erro de conexão ao iniciar o ciclo.");
+      }
+    });
+
+    function entryPickRowHtml(entry) {
+      var implied = (1 / entry.odds_decimal) * 100;
+      return "<tr>" +
+        "<td>" + entry.league + "</td>" +
+        "<td>" + entry.event_name + "</td>" +
+        "<td>" + (MARKET_LABELS[entry.market_type] || entry.market_type) + "</td>" +
+        "<td>" + entry.selection_description + "</td>" +
+        "<td>" + entry.odds_decimal.toFixed(2) + "</td>" +
+        "<td>" + formatPercent(implied, 1) + "</td>" +
+        '<td><button type="button" class="btn-small use-round-btn" data-odds-id="' + entry.id + '">Usar nesta rodada</button></td>' +
+        "</tr>";
+    }
+
+    async function loadOddsForPicking(cycle) {
+      var tbody = document.getElementById("pick-round-body");
+      try {
+        var resp = await fetch("/odds/cached");
+        if (!resp.ok) {
+          tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Não foi possível carregar as odds.</td></tr>';
+          return;
+        }
+        var entries = await resp.json();
+        if (entries.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Nenhuma odd em cache ainda. Cadastre em Gerador → "Adicionar odds manuais".</td></tr>';
+          return;
+        }
+        var groups = {};
+        var order = [];
+        entries.forEach(function (entry) {
+          var parsed = entry.event_start ? parseServerDate(entry.event_start) : null;
+          var key = parsed ? localDayKey(parsed) : "__no_date__";
+          if (!groups[key]) { groups[key] = []; order.push(key); }
+          groups[key].push(entry);
+        });
+        order.sort(function (a, b) {
+          if (a === "__no_date__") return 1;
+          if (b === "__no_date__") return -1;
+          return a < b ? -1 : a > b ? 1 : 0;
+        });
+        tbody.innerHTML = order.map(function (key) {
+          var groupEntries = groups[key];
+          var label = key === "__no_date__" ? "Sem data definida" : dayLabelFromKey(key);
+          var header = '<tr class="group-header"><td colspan="8">' + label + '</td></tr>';
+          return header + groupEntries.map(entryPickRowHtml).join("");
+        }).join("");
+
+        var entriesById = {};
+        entries.forEach(function (e) { entriesById[e.id] = e; });
+
+        tbody.querySelectorAll(".use-round-btn").forEach(function (btn) {
+          btn.addEventListener("click", async function () {
+            var entry = entriesById[btn.getAttribute("data-odds-id")];
+            if (!entry) return;
+            clearError();
+            btn.disabled = true;
+            try {
+              var resp = await fetch("/cycle/" + cycle.id + "/rounds", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  league: entry.league,
+                  event_name: entry.event_name,
+                  market_type: entry.market_type,
+                  selection_description: entry.selection_description,
+                  odds_decimal: entry.odds_decimal,
+                  event_start: entry.event_start,
+                }),
+              });
+              if (!resp.ok) {
+                var errBody = await resp.json().catch(function () { return {}; });
+                showError(errBody.detail || "Não foi possível registrar a rodada.");
+                btn.disabled = false;
+                return;
+              }
+              await loadPage();
+            } catch (err) {
+              showError("Erro de conexão ao registrar a rodada.");
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Erro de conexão.</td></tr>';
+      }
+    }
+
+    function roundsRowHtml(bet) {
+      var leg = bet.legs[0];
+      var statusClass = bet.status === "pending" ? "pending" : bet.status;
+      return "<tr>" +
+        "<td>" + bet.cycle_round + "</td>" +
+        "<td>" + (leg ? leg.league + " — " + leg.event_name + " (" + (MARKET_LABELS[leg.market_type] || leg.market_type) + ": " + leg.selection_description + ")" : "—") + "</td>" +
+        "<td>" + bet.total_odds.toFixed(2) + "</td>" +
+        "<td>" + formatBRL(bet.stake) + "</td>" +
+        '<td><span class="badge badge-' + statusClass + '">' + (STATUS_LABELS[bet.status] || bet.status) + "</span></td>" +
+        "<td>" + formatBRL(bet.potential_return) + "</td>" +
+        "</tr>";
+    }
+
+    async function loadRounds(cycle) {
+      var tbody = document.getElementById("rounds-body");
+      try {
+        var resp = await fetch("/cycle/" + cycle.id + "/rounds");
+        if (!resp.ok) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Não foi possível carregar as rodadas.</td></tr>';
+          return null;
+        }
+        var rounds = await resp.json();
+        if (rounds.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Nenhuma rodada ainda — escolha uma perna abaixo.</td></tr>';
+        } else {
+          tbody.innerHTML = rounds.slice().reverse().map(roundsRowHtml).join("");
+        }
+        return rounds;
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Erro de conexão.</td></tr>';
+        return null;
+      }
+    }
+
+    var CYCLE_STATUS_LABELS = {
+      "completed": "🎉 Meta atingida! Este ciclo foi concluído com sucesso.",
+      "busted": "💥 Este ciclo foi perdido — uma rodada não venceu.",
+      "cashed_out": "✅ Ciclo encerrado manualmente, guardando o lucro acumulado.",
+    };
+
+    var CYCLE_HISTORY_STATUS_LABELS = {
+      "active": "Ativo",
+      "completed": "Meta atingida",
+      "busted": "Perdido",
+      "cashed_out": "Encerrado manualmente",
+    };
+
+    async function loadCycleHistory() {
+      var tbody = document.getElementById("cycle-history-body");
+      try {
+        var resp = await fetch("/cycle/history");
+        if (!resp.ok) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Não foi possível carregar o histórico.</td></tr>';
+          return;
+        }
+        var cycles = await resp.json();
+        if (cycles.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Nenhum ciclo iniciado ainda.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cycles.map(function (c) {
+          return "<tr>" +
+            "<td>" + formatDateTime(c.created_at) + "</td>" +
+            "<td>" + formatBRL(c.target_profit) + "</td>" +
+            "<td>" + formatBRL(c.starting_stake) + "</td>" +
+            "<td>" + (CYCLE_HISTORY_STATUS_LABELS[c.status] || c.status) + "</td>" +
+            "<td>" + (c.ended_at ? formatDateTime(c.ended_at) : "—") + "</td>" +
+            "</tr>";
+        }).join("");
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Erro de conexão.</td></tr>';
+      }
+    }
+
+    async function renderActiveCycle(cycle) {
+      document.getElementById("no-cycle-section").classList.add("hidden");
+      document.getElementById("active-cycle-section").classList.remove("hidden");
+
+      document.getElementById("cycle-target").textContent = formatBRL(cycle.target_profit);
+      document.getElementById("cycle-starting").textContent = formatBRL(cycle.starting_stake);
+
+      var bankrollResp = await fetch("/bankroll");
+      var bankroll = bankrollResp.ok ? await bankrollResp.json() : null;
+      var currentAmount = bankroll ? bankroll.current_amount : cycle.starting_stake;
+      document.getElementById("cycle-current").textContent = formatBRL(currentAmount);
+
+      var profit = currentAmount - cycle.starting_stake;
+      var profitEl = document.getElementById("cycle-profit");
+      profitEl.textContent = formatBRL(profit);
+      profitEl.classList.toggle("positive", profit >= 0);
+      profitEl.classList.toggle("negative", profit < 0);
+
+      var rounds = await loadRounds(cycle);
+      var roundCount = rounds ? rounds.length : 0;
+      document.getElementById("cycle-round").textContent = roundCount;
+
+      var endedBanner = document.getElementById("cycle-ended-banner");
+      var pendingCard = document.getElementById("pending-round-card");
+      var pickCard = document.getElementById("pick-round-card");
+      var cashOutCard = document.getElementById("cash-out-card");
+
+      if (cycle.status !== "active") {
+        document.getElementById("cycle-ended-text").textContent = CYCLE_STATUS_LABELS[cycle.status] || cycle.status;
+        endedBanner.className = "banner " + (cycle.status === "busted" ? "banner-danger" : "banner-info");
+        endedBanner.classList.remove("hidden");
+        pendingCard.classList.add("hidden");
+        pickCard.classList.add("hidden");
+        cashOutCard.classList.add("hidden");
+        loadCycleHistory();
+        return;
+      }
+      endedBanner.classList.add("hidden");
+
+      var pendingRound = rounds && rounds.find(function (b) { return b.status === "pending"; });
+      if (pendingRound) {
+        pickCard.classList.add("hidden");
+        cashOutCard.classList.add("hidden");
+        pendingCard.classList.remove("hidden");
+        var leg = pendingRound.legs[0];
+        document.getElementById("pending-round-detail").innerHTML =
+          "Rodada " + pendingRound.cycle_round + ": <strong>" + leg.league + " — " + leg.event_name +
+          "</strong> (" + (MARKET_LABELS[leg.market_type] || leg.market_type) + ": " + leg.selection_description + ")" +
+          " — odd " + leg.odds_decimal.toFixed(2) + " — stake " + formatBRL(pendingRound.stake) +
+          " — retorno potencial " + formatBRL(pendingRound.potential_return);
+
+        var settleForm = document.getElementById("settle-round-form");
+        settleForm.onsubmit = async function (ev) {
+          ev.preventDefault();
+          clearError();
+          var result = settleForm.querySelector("select[name='result']").value;
+          var btn = settleForm.querySelector("button[type='submit']");
+          btn.disabled = true;
+          try {
+            var resp = await fetch("/bets/" + pendingRound.id + "/settle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ result: result }),
+            });
+            if (!resp.ok) {
+              var errBody = await resp.json().catch(function () { return {}; });
+              showError(errBody.detail || "Não foi possível registrar o resultado.");
+              btn.disabled = false;
+              return;
+            }
+            await renderCycleById(pendingRound.cycle_id);
+          } catch (err) {
+            showError("Erro de conexão ao registrar o resultado.");
+            btn.disabled = false;
+          }
+        };
+      } else {
+        pendingCard.classList.add("hidden");
+        pickCard.classList.remove("hidden");
+        cashOutCard.classList.remove("hidden");
+        document.getElementById("pick-round-stake-hint").textContent =
+          "A rodada " + (roundCount + 1) + " vai apostar o saldo TOTAL atual: " + formatBRL(currentAmount) + ".";
+        await loadOddsForPicking(cycle);
+      }
+      loadCycleHistory();
+    }
+
+    function renderNoCycle() {
+      document.getElementById("active-cycle-section").classList.add("hidden");
+      document.getElementById("no-cycle-section").classList.remove("hidden");
+      loadStartCycleHint();
+      loadCycleHistory();
+    }
+
+    // Depois de liquidar uma rodada ou encerrar manualmente, o ciclo pode
+    // ter acabado de sair de "active" — nesse caso `/cycle/active` já
+    // devolveria 404 (não é mais o ciclo ativo). Por isso buscamos direto
+    // por ID (`/cycle/{id}`, que funciona pra qualquer status) em vez de
+    // chamar `loadPage()` de novo, senão o banner de resultado final
+    // (meta atingida / perdido) nunca chegaria a aparecer.
+    async function renderCycleById(cycleId) {
+      var resp = await fetch("/cycle/" + cycleId);
+      if (!resp.ok) {
+        await loadPage();
+        return;
+      }
+      var cycle = await resp.json();
+      window.__currentCycle = cycle;
+      document.getElementById("no-cycle-section").classList.add("hidden");
+      document.getElementById("active-cycle-section").classList.remove("hidden");
+      await renderActiveCycle(cycle);
+    }
+
+    document.getElementById("start-new-cycle-btn").addEventListener("click", function () {
+      window.__currentCycle = null;
+      renderNoCycle();
+    });
+
+    document.getElementById("cash-out-btn").addEventListener("click", async function () {
+      var cycle = window.__currentCycle;
+      if (!cycle) return;
+      clearError();
+      this.disabled = true;
+      try {
+        var resp = await fetch("/cycle/" + cycle.id + "/cash-out", { method: "POST" });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showError(errBody.detail || "Não foi possível encerrar o ciclo.");
+          this.disabled = false;
+          return;
+        }
+        await renderCycleById(cycle.id);
+      } catch (err) {
+        showError("Erro de conexão ao encerrar o ciclo.");
+        this.disabled = false;
+      }
+    });
+
+    async function loadPage() {
+      clearError();
+      try {
+        var resp = await fetch("/cycle/active");
+        if (resp.status === 404) {
+          window.__currentCycle = null;
+          renderNoCycle();
+          return;
+        }
+        if (!resp.ok) {
+          showError("Não foi possível carregar o ciclo.");
+          return;
+        }
+        var cycle = await resp.json();
+        window.__currentCycle = cycle;
+        await renderActiveCycle(cycle);
+      } catch (err) {
+        showError("Erro de conexão ao carregar o ciclo.");
+      }
+    }
+
+    loadPage();
+  })();
+</script>
+{% endblock %}

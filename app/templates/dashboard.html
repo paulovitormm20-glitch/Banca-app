@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+
+{% block title %}Painel — Gestor de Banca{% endblock %}
+
+{% block content %}
+<h1>Painel</h1>
+<p class="page-subtitle">Visão geral da sua banca, limites de stop e desempenho histórico.</p>
+
+<div id="no-bankroll-message" class="banner banner-info hidden">
+  Configure sua banca para começar a acompanhar seus resultados.
+  <a href="/bankroll-page">Configurar banca</a>
+</div>
+
+<div id="stop-banner" class="banner banner-danger hidden"></div>
+
+<div id="dashboard-content" class="hidden">
+  <div class="grid">
+    <div class="card stat-card">
+      <p class="stat-label">Saldo atual</p>
+      <p class="stat-value" id="stat-current-amount">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Lucro / Prejuízo acumulado</p>
+      <p class="stat-value" id="stat-profit-loss">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">ROI</p>
+      <p class="stat-value" id="stat-roi">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Maior sequência de perdas</p>
+      <p class="stat-value" id="stat-losing-streak">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Taxa de acerto geral</p>
+      <p class="stat-value" id="stat-win-rate">—</p>
+      <p class="stat-hint" id="stat-settled-hint">—</p>
+    </div>
+  </div>
+
+  <h2>Taxa de acerto por tier</h2>
+  <div class="grid mb-2">
+    <div class="card stat-card">
+      <p class="stat-label">Tier 25x</p>
+      <p class="stat-value" id="stat-tier-25">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Tier 50x</p>
+      <p class="stat-value" id="stat-tier-50">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Tier 100x</p>
+      <p class="stat-value" id="stat-tier-100">—</p>
+    </div>
+  </div>
+
+  <h2>Real vs. estimado por tier</h2>
+  <p class="page-subtitle">Compara a taxa de acerto realmente observada com a probabilidade combinada média que o gerador estimava — útil para calibrar a curadoria de mercados.</p>
+  <div class="table-wrap card">
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Total de apostas</th>
+          <th>Resolvidas</th>
+          <th>Vitórias</th>
+          <th>Taxa de acerto real</th>
+          <th>Probabilidade média estimada</th>
+        </tr>
+      </thead>
+      <tbody id="by-tier-body">
+        <tr><td colspan="6" class="empty-state">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="mt-2">Evolução da banca</h2>
+  <p class="page-subtitle">Saldo após cada evento registrado (depósito, ajuste, aposta liquidada) ao longo do tempo. Passe o mouse sobre um ponto para ver o detalhe.</p>
+  <div class="card">
+    <svg id="balance-chart" viewBox="0 0 600 200" preserveAspectRatio="none" class="balance-chart"></svg>
+    <p id="balance-chart-empty" class="empty-state hidden">Ainda não há histórico suficiente para desenhar o gráfico (é preciso pelo menos 2 eventos de saldo).</p>
+  </div>
+</div>
+
+<h2 class="mt-2">Odds ao vivo</h2>
+<p class="page-subtitle">
+  Snapshot do cache de odds que alimenta o gerador. "Atualizar via API" busca odds novas na
+  The Odds API (se <code>ODDS_API_KEY</code> estiver configurada) e marca quais pernas caíram,
+  subiram ou ficaram iguais desde a última consulta — é só informação real para você decidir,
+  nada é apostado automaticamente.
+</p>
+<div class="card">
+  <div class="odds-live-toolbar">
+    <button type="button" id="refresh-odds-btn">Atualizar via API</button>
+    <span id="odds-live-summary" class="odds-live-summary"></span>
+  </div>
+  <p id="refresh-odds-message" class="banner banner-info hidden"></p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Dia do jogo</th>
+          <th>Liga</th>
+          <th>Evento</th>
+          <th>Mercado</th>
+          <th>Seleção</th>
+          <th>Odd atual</th>
+          <th>Movimento</th>
+          <th>Atualizado</th>
+        </tr>
+      </thead>
+      <tbody id="odds-live-body">
+        <tr><td colspan="8" class="empty-state">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="dashboard-error" class="banner banner-danger hidden"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var MARKET_LABELS = {
+    "under_goals": "Menos de X.5 gols na partida",
+    "double_chance_favorite": "Dupla chance no favorito claro",
+    "under_corners": "Menos de X.5 cantos na partida",
+    "under_cards": "Menos de X.5 cartões na partida",
+    "btts_no": "Ambas marcam - Não",
+    "team_not_lose": "Time não perde (dupla chance / empate anula)",
+  };
+
+  var MOVEMENT_LABELS = {
+    "down": "▼ caiu",
+    "up": "▲ subiu",
+    "same": "— igual",
+  };
+
+  function movementBadgeHtml(movement) {
+    var key = movement || "new";
+    var label = MOVEMENT_LABELS[key] || "● novo";
+    return '<span class="badge badge-movement-' + key + '">' + label + '</span>';
+  }
+
+  // Desenha um line chart simples em SVG puro (sem biblioteca externa) a
+  // partir do histórico de saldo (`BankrollLog`, mais antigo primeiro).
+  function renderBalanceChart(history) {
+    var svg = document.getElementById("balance-chart");
+    var emptyMsg = document.getElementById("balance-chart-empty");
+
+    if (!history || history.length < 2) {
+      svg.classList.add("hidden");
+      emptyMsg.classList.remove("hidden");
+      return;
+    }
+    svg.classList.remove("hidden");
+    emptyMsg.classList.add("hidden");
+
+    var w = 600, h = 200, pad = 12;
+    var values = history.map(function (entry) { return entry.balance_after; });
+    var min = Math.min.apply(null, values);
+    var max = Math.max.apply(null, values);
+    if (max === min) {
+      // Saldo nunca mudou (ex.: só o evento "initial") — evita divisão por zero.
+      max = min + 1;
+      min = min - 1;
+    }
+
+    function xAt(i) {
+      return pad + (i / (history.length - 1)) * (w - 2 * pad);
+    }
+    function yAt(value) {
+      return pad + (1 - (value - min) / (max - min)) * (h - 2 * pad);
+    }
+
+    var points = history.map(function (entry, i) {
+      return xAt(i).toFixed(1) + "," + yAt(entry.balance_after).toFixed(1);
+    }).join(" ");
+
+    var dots = history.map(function (entry, i) {
+      var color = entry.change_amount > 0 ? "var(--color-success)"
+        : entry.change_amount < 0 ? "var(--color-danger)"
+        : "var(--color-void)";
+      var title = formatDateTime(entry.created_at) + " — " + formatBRL(entry.balance_after) + " (" + entry.reason + ")";
+      return '<circle cx="' + xAt(i).toFixed(1) + '" cy="' + yAt(entry.balance_after).toFixed(1) +
+        '" r="3.5" fill="' + color + '"><title>' + title + '</title></circle>';
+    }).join("");
+
+    svg.innerHTML =
+      '<polyline points="' + points + '" fill="none" stroke="var(--color-primary)" stroke-width="2" />' +
+      dots;
+  }
+
+  async function loadBalanceChart() {
+    try {
+      var resp = await fetch("/bankroll/history");
+      if (resp.ok) {
+        renderBalanceChart(await resp.json());
+      }
+    } catch (err) {
+      // Sem banca ainda (404) ou erro de rede: o gráfico simplesmente não aparece.
+    }
+  }
+
+  // Carrega o cache de odds e mostra liga/evento/mercado/odd + indicador de
+  // movimento (odd caiu, subiu ou ficou igual desde a última atualização).
+  async function loadLiveOdds() {
+    var tbody = document.getElementById("odds-live-body");
+    var summaryEl = document.getElementById("odds-live-summary");
+    try {
+      var resp = await fetch("/odds/cached");
+      if (!resp.ok) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Não foi possível carregar as odds.</td></tr>';
+        return;
+      }
+      var odds = await resp.json();
+      if (odds.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Nenhuma odd em cache ainda. Cadastre em Gerador → "Adicionar odds manuais".</td></tr>';
+        summaryEl.innerHTML = "";
+        return;
+      }
+
+      var counts = { down: 0, up: 0, same: 0, new: 0 };
+      odds.forEach(function (o) { counts[o.movement || "new"]++; });
+      summaryEl.innerHTML =
+        '<span class="badge badge-movement-down">▼ ' + counts.down + ' caindo</span>' +
+        '<span class="badge badge-movement-up">▲ ' + counts.up + ' subindo</span>' +
+        '<span class="badge badge-movement-same">— ' + counts.same + ' iguais</span>' +
+        '<span class="badge badge-movement-new">● ' + counts.new + ' novas</span>';
+
+      var sorted = odds.slice().sort(function (a, b) {
+        return new Date(b.updated_at) - new Date(a.updated_at);
+      });
+
+      tbody.innerHTML = sorted.map(function (o) {
+        var oddCell = o.odds_decimal.toFixed(2);
+        if (o.previous_odds_decimal != null) {
+          oddCell += ' <span class="text-muted">(era ' + o.previous_odds_decimal.toFixed(2) + ')</span>';
+        }
+        var dateCell = dayLabel(o.event_start);
+        if (o.event_start) {
+          dateCell += ' <span class="text-muted">' + formatDateTime(o.event_start) + '</span>';
+        }
+        return "<tr>" +
+          "<td>" + dateCell + "</td>" +
+          "<td>" + o.league + "</td>" +
+          "<td>" + o.event_name + "</td>" +
+          "<td>" + (MARKET_LABELS[o.market_type] || o.market_type) + "</td>" +
+          "<td>" + o.selection_description + "</td>" +
+          "<td>" + oddCell + "</td>" +
+          "<td>" + movementBadgeHtml(o.movement) + "</td>" +
+          "<td>" + formatDateTime(o.updated_at) + "</td>" +
+          "</tr>";
+      }).join("");
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Erro de conexão.</td></tr>';
+    }
+  }
+
+  document.getElementById("refresh-odds-btn").addEventListener("click", async function () {
+    var btn = document.getElementById("refresh-odds-btn");
+    var msg = document.getElementById("refresh-odds-message");
+    btn.disabled = true;
+    msg.classList.add("hidden");
+    try {
+      var resp = await fetch("/odds/refresh", { method: "POST" });
+      var body = await resp.json().catch(function () { return {}; });
+      msg.textContent = body.message || "Não foi possível atualizar as odds.";
+      msg.classList.remove("hidden");
+      await loadLiveOdds();
+    } catch (err) {
+      msg.textContent = "Erro de conexão ao atualizar as odds.";
+      msg.classList.remove("hidden");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadLiveOdds();
+
+  (async function () {
+    var noBankrollMsg = document.getElementById("no-bankroll-message");
+    var dashboardContent = document.getElementById("dashboard-content");
+    var stopBanner = document.getElementById("stop-banner");
+    var errorBanner = document.getElementById("dashboard-error");
+
+    function showError(msg) {
+      errorBanner.textContent = msg;
+      errorBanner.classList.remove("hidden");
+    }
+
+    // 1) Banca (saldo, lucro/prejuízo, ROI)
+    try {
+      var bankrollResp = await fetch("/bankroll");
+      if (bankrollResp.status === 404) {
+        noBankrollMsg.classList.remove("hidden");
+        dashboardContent.classList.add("hidden");
+      } else if (!bankrollResp.ok) {
+        showError("Não foi possível carregar os dados da banca.");
+      } else {
+        var bankroll = await bankrollResp.json();
+        dashboardContent.classList.remove("hidden");
+
+        document.getElementById("stat-current-amount").textContent = formatBRL(bankroll.current_amount);
+
+        var plEl = document.getElementById("stat-profit-loss");
+        plEl.textContent = formatBRL(bankroll.profit_loss);
+        plEl.classList.toggle("positive", bankroll.profit_loss >= 0);
+        plEl.classList.toggle("negative", bankroll.profit_loss < 0);
+
+        var roiEl = document.getElementById("stat-roi");
+        roiEl.textContent = formatPercent(bankroll.roi_percent, 2);
+        roiEl.classList.toggle("positive", bankroll.roi_percent >= 0);
+        roiEl.classList.toggle("negative", bankroll.roi_percent < 0);
+      }
+    } catch (err) {
+      showError("Erro de conexão ao carregar a banca.");
+    }
+
+    // 2) Estatísticas gerais (taxa de acerto, sequência de perdas, por tier)
+    try {
+      var statsResp = await fetch("/history/stats");
+      if (statsResp.ok) {
+        var stats = await statsResp.json();
+        document.getElementById("stat-losing-streak").textContent = stats.max_losing_streak;
+        document.getElementById("stat-win-rate").textContent = formatPercent(stats.win_rate_overall, 1);
+        document.getElementById("stat-settled-hint").textContent =
+          stats.settled_bets + " de " + stats.total_bets + " apostas resolvidas";
+
+        ["25", "50", "100"].forEach(function (tier) {
+          var value = stats.win_rate_by_tier && (tier in stats.win_rate_by_tier)
+            ? stats.win_rate_by_tier[tier]
+            : 0;
+          document.getElementById("stat-tier-" + tier).textContent = formatPercent(value, 1);
+        });
+      }
+    } catch (err) {
+      showError("Erro de conexão ao carregar as estatísticas.");
+    }
+
+    // 3) Status de stop (banner vermelho se algum limite foi atingido)
+    try {
+      var stopResp = await fetch("/bankroll/stop-status");
+      if (stopResp.ok) {
+        var stop = await stopResp.json();
+        if (stop.daily_limit_hit || stop.weekly_limit_hit) {
+          var parts = [];
+          if (stop.daily_limit_hit) {
+            parts.push(
+              "Stop DIÁRIO atingido: perda de " + formatPercent(stop.daily_loss_percent, 1) +
+              " (limite " + formatPercent(stop.stop_daily_percent, 1) + "). Pare de apostar hoje."
+            );
+          }
+          if (stop.weekly_limit_hit) {
+            parts.push(
+              "Stop SEMANAL atingido: perda de " + formatPercent(stop.weekly_loss_percent, 1) +
+              " (limite " + formatPercent(stop.stop_weekly_percent, 1) + "). Pare de apostar esta semana."
+            );
+          }
+          stopBanner.innerHTML = "⚠️ " + parts.join(" &nbsp;|&nbsp; ");
+          stopBanner.classList.remove("hidden");
+        }
+      }
+    } catch (err) {
+      // Se a banca não existe, o endpoint retorna 404 — não é um erro a exibir aqui.
+    }
+
+    // 4) Real vs. estimado por tier
+    try {
+      var byTierResp = await fetch("/history/stats/by-tier");
+      var tbody = document.getElementById("by-tier-body");
+      if (byTierResp.ok) {
+        var byTier = await byTierResp.json();
+        if (byTier.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Nenhuma aposta registrada ainda.</td></tr>';
+        } else {
+          tbody.innerHTML = byTier.map(function (row) {
+            return "<tr>" +
+              "<td>" + row.tier + "x</td>" +
+              "<td>" + row.total + "</td>" +
+              "<td>" + row.settled + "</td>" +
+              "<td>" + row.wins + "</td>" +
+              "<td>" + formatPercent(row.win_rate_real, 1) + "</td>" +
+              "<td>" + formatPercent(row.avg_estimated_probability, 1) + "</td>" +
+              "</tr>";
+          }).join("");
+        }
+      } else {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Não foi possível carregar.</td></tr>';
+      }
+    } catch (err) {
+      showError("Erro de conexão ao carregar comparação por tier.");
+    }
+
+    // 5) Evolução da banca (gráfico) — só faz sentido se a banca existe.
+    if (!dashboardContent.classList.contains("hidden")) {
+      loadBalanceChart();
+    }
+  })();
+</script>
+{% endblock %}

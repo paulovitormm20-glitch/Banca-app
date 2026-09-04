@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Histórico — Gestor de Banca{% endblock %}
+
+{% block content %}
+<h1>Histórico de apostas</h1>
+<p class="page-subtitle">
+  Todas as múltiplas registradas (mais recentes primeiro). Registre o resultado real
+  assim que souber o desfecho na casa de apostas — o saldo da banca só é atualizado
+  a partir do resultado informado aqui.
+</p>
+
+<div id="history-error" class="banner banner-danger hidden"></div>
+
+<div class="table-wrap card">
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Data</th>
+        <th>Tier</th>
+        <th>Odd total</th>
+        <th>Stake</th>
+        <th>Status</th>
+        <th>Retorno potencial</th>
+        <th>Prob. combinada</th>
+        <th>Resolver</th>
+      </tr>
+    </thead>
+    <tbody id="history-body">
+      <tr><td colspan="9" class="empty-state">Carregando...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var MARKET_LABELS = {
+      "under_goals": "Menos de X.5 gols na partida",
+      "double_chance_favorite": "Dupla chance no favorito claro",
+      "under_corners": "Menos de X.5 cantos na partida",
+      "under_cards": "Menos de X.5 cartões na partida",
+      "btts_no": "Ambas marcam - Não",
+      "team_not_lose": "Time não perde (dupla chance / empate anula)",
+    };
+
+    var STATUS_LABELS = {
+      "pending": "Pendente",
+      "won": "Ganhou",
+      "lost": "Perdeu",
+      "void": "Anulada",
+    };
+
+    function showError(msg) {
+      var el = document.getElementById("history-error");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+
+    function statusBadge(status) {
+      var label = STATUS_LABELS[status] || status;
+      return '<span class="badge badge-' + status + '">' + label + "</span>";
+    }
+
+    function legsDetailHtml(bet) {
+      var items = bet.legs.map(function (leg) {
+        var dateText = leg.event_start ? (dayLabel(leg.event_start) + " (" + formatDateTime(leg.event_start) + ")") : "sem data";
+        return "<li>" +
+          leg.league + " — " + leg.event_name + " — " +
+          (MARKET_LABELS[leg.market_type] || leg.market_type) + " (" + leg.selection_description + ") — " +
+          "jogo: " + dateText + " — " +
+          "odd " + leg.odds_decimal.toFixed(2) + " — " +
+          "prob. implícita " + formatPercent(leg.implied_probability * 100, 1) + " — " +
+          "resultado: " + (STATUS_LABELS[leg.result] || leg.result) +
+          "</li>";
+      }).join("");
+      return '<div class="legs-detail"><strong>Pernas da múltipla:</strong><ul>' + items + "</ul></div>";
+    }
+
+    function settleFormHtml(bet) {
+      if (bet.status !== "pending") {
+        return "—";
+      }
+      return (
+        '<form class="settle-form" data-bet-id="' + bet.id + '">' +
+        '<select name="result">' +
+        '<option value="won">Ganhou</option>' +
+        '<option value="lost">Perdeu</option>' +
+        '<option value="void">Anulada</option>' +
+        "</select>" +
+        '<button type="submit" class="btn-small">Registrar</button>' +
+        "</form>"
+      );
+    }
+
+    function renderRows(bets) {
+      var tbody = document.getElementById("history-body");
+      if (bets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Nenhuma aposta registrada ainda. Gere uma múltipla em Gerador.</td></tr>';
+        return;
+      }
+
+      var rowsHtml = bets.map(function (bet, index) {
+        var detailRowId = "legs-row-" + bet.id;
+        var mainRow =
+          "<tr>" +
+          '<td><button type="button" class="btn-secondary btn-small toggle-legs" data-target="' + detailRowId + '">+</button></td>' +
+          "<td>" + formatDateTime(bet.created_at) + "</td>" +
+          "<td>" + bet.tier + "x</td>" +
+          "<td>" + bet.total_odds.toFixed(2) + "</td>" +
+          "<td>" + formatBRL(bet.stake) + "</td>" +
+          "<td>" + statusBadge(bet.status) + "</td>" +
+          "<td>" + formatBRL(bet.potential_return) + "</td>" +
+          "<td>" + formatPercent(bet.combined_probability * 100, 1) + "</td>" +
+          "<td>" + settleFormHtml(bet) + "</td>" +
+          "</tr>";
+
+        var detailRow =
+          '<tr id="' + detailRowId + '" class="hidden">' +
+          '<td colspan="9">' + legsDetailHtml(bet) + "</td>" +
+          "</tr>";
+
+        return mainRow + detailRow;
+      }).join("");
+
+      tbody.innerHTML = rowsHtml;
+
+      tbody.querySelectorAll(".toggle-legs").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var target = document.getElementById(btn.getAttribute("data-target"));
+          if (!target) return;
+          var willShow = target.classList.contains("hidden");
+          target.classList.toggle("hidden");
+          btn.textContent = willShow ? "−" : "+";
+        });
+      });
+
+      tbody.querySelectorAll(".settle-form").forEach(function (form) {
+        form.addEventListener("submit", async function (ev) {
+          ev.preventDefault();
+          var betId = form.getAttribute("data-bet-id");
+          var result = form.querySelector("select[name='result']").value;
+          var submitBtn = form.querySelector("button[type='submit']");
+          submitBtn.disabled = true;
+
+          try {
+            var resp = await fetch("/bets/" + betId + "/settle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ result: result }),
+            });
+            if (!resp.ok) {
+              var errBody = await resp.json().catch(function () { return {}; });
+              showError(errBody.detail || "Não foi possível registrar o resultado.");
+              submitBtn.disabled = false;
+              return;
+            }
+            await loadHistory();
+          } catch (err) {
+            showError("Erro de conexão ao registrar o resultado.");
+            submitBtn.disabled = false;
+          }
+        });
+      });
+    }
+
+    async function loadHistory() {
+      try {
+        var resp = await fetch("/history");
+        if (!resp.ok) {
+          showError("Não foi possível carregar o histórico.");
+          return;
+        }
+        var bets = await resp.json();
+        renderRows(bets);
+      } catch (err) {
+        showError("Erro de conexão ao carregar o histórico.");
+      }
+    }
+
+    loadHistory();
+  })();
+</script>
+{% endblock %}

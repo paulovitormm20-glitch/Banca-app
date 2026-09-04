@@ -1,0 +1,16 @@
+# Segredos e configuração local — nunca sobem pro git.
+.env
+
+# Banco de dados local (dado real da sua banca) — NUNCA deve ir pro
+# repositório público. No Render, um banco novo é criado do zero a cada
+# deploy/reinício (plano gratuito não tem disco persistente).
+banca.db
+banca.db.backup-*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs locais
+*.log

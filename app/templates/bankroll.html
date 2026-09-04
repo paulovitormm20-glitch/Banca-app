@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block title %}Banca — Gestor de Banca{% endblock %}
+
+{% block content %}
+<h1>Banca</h1>
+<p class="page-subtitle">Configure sua banca inicial e os limites de stop, ou ajuste o saldo manualmente.</p>
+
+<div id="bankroll-error" class="banner banner-danger hidden"></div>
+
+<!-- Formulário de inicialização (exibido apenas se a banca ainda não existe) -->
+<div id="init-section" class="card hidden">
+  <h2>Configurar banca inicial</h2>
+  <form id="init-form" class="form-stack">
+    <div class="form-row">
+      <label for="init-amount">Valor inicial da banca (R$)</label>
+      <input type="number" id="init-amount" name="initial_amount" step="0.01" min="0.01" required>
+    </div>
+    <div class="form-row">
+      <label for="init-unit-percent">% da banca por unidade de aposta</label>
+      <input type="number" id="init-unit-percent" name="unit_percent" step="0.1" min="0" value="3.0" required>
+      <span class="form-hint">Usado como sugestão automática de stake no gerador.</span>
+    </div>
+    <div class="form-row">
+      <label for="init-stop-daily">Stop diário (%) — opcional</label>
+      <input type="number" id="init-stop-daily" name="stop_daily_percent" step="0.1" min="0" placeholder="ex.: 10">
+      <span class="form-hint">Alerta se a banca perder essa % em um único dia.</span>
+    </div>
+    <div class="form-row">
+      <label for="init-stop-weekly">Stop semanal (%) — opcional</label>
+      <input type="number" id="init-stop-weekly" name="stop_weekly_percent" step="0.1" min="0" placeholder="ex.: 20">
+      <span class="form-hint">Alerta se a banca perder essa % nos últimos 7 dias.</span>
+    </div>
+    <button type="submit">Criar banca</button>
+  </form>
+</div>
+
+<!-- Painel da banca existente + ajuste manual (exibido apenas se a banca já existe) -->
+<div id="existing-section" class="hidden">
+  <div class="grid">
+    <div class="card stat-card">
+      <p class="stat-label">Valor inicial</p>
+      <p class="stat-value" id="view-initial-amount">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Saldo atual</p>
+      <p class="stat-value" id="view-current-amount">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Lucro / Prejuízo</p>
+      <p class="stat-value" id="view-profit-loss">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">ROI</p>
+      <p class="stat-value" id="view-roi">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">% por unidade</p>
+      <p class="stat-value" id="view-unit-percent">—</p>
+    </div>
+    <div class="card stat-card">
+      <p class="stat-label">Stop diário / semanal</p>
+      <p class="stat-value" id="view-stops">—</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Ajuste manual de saldo</h2>
+    <p class="page-subtitle">Use para registrar depósitos, saques ou correções pontuais. Valores negativos diminuem o saldo.</p>
+    <form id="adjust-form" class="form-stack">
+      <div class="form-row">
+        <label for="adjust-amount">Valor do ajuste (R$)</label>
+        <input type="number" id="adjust-amount" name="amount" step="0.01" required>
+        <span class="form-hint">Ex.: 50 para depositar R$ 50,00, ou -50 para sacar R$ 50,00.</span>
+      </div>
+      <div class="form-row">
+        <label for="adjust-note">Nota</label>
+        <input type="text" id="adjust-note" name="note" placeholder="ex.: depósito extra" required>
+      </div>
+      <button type="submit">Registrar ajuste</button>
+    </form>
+    <p id="adjust-success" class="banner banner-info hidden mt-2"></p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var errorBanner = document.getElementById("bankroll-error");
+    var initSection = document.getElementById("init-section");
+    var existingSection = document.getElementById("existing-section");
+
+    function showError(msg) {
+      errorBanner.textContent = msg;
+      errorBanner.classList.remove("hidden");
+    }
+
+    function renderBankroll(bankroll) {
+      document.getElementById("view-initial-amount").textContent = formatBRL(bankroll.initial_amount);
+      document.getElementById("view-current-amount").textContent = formatBRL(bankroll.current_amount);
+
+      var plEl = document.getElementById("view-profit-loss");
+      plEl.textContent = formatBRL(bankroll.profit_loss);
+      plEl.classList.toggle("positive", bankroll.profit_loss >= 0);
+      plEl.classList.toggle("negative", bankroll.profit_loss < 0);
+
+      var roiEl = document.getElementById("view-roi");
+      roiEl.textContent = formatPercent(bankroll.roi_percent, 2);
+      roiEl.classList.toggle("positive", bankroll.roi_percent >= 0);
+      roiEl.classList.toggle("negative", bankroll.roi_percent < 0);
+
+      document.getElementById("view-unit-percent").textContent = formatPercent(bankroll.unit_percent, 1);
+
+      var dailyTxt = (bankroll.stop_daily_percent === null || bankroll.stop_daily_percent === undefined)
+        ? "sem limite"
+        : formatPercent(bankroll.stop_daily_percent, 1);
+      var weeklyTxt = (bankroll.stop_weekly_percent === null || bankroll.stop_weekly_percent === undefined)
+        ? "sem limite"
+        : formatPercent(bankroll.stop_weekly_percent, 1);
+      document.getElementById("view-stops").textContent = dailyTxt + " / " + weeklyTxt;
+    }
+
+    async function loadBankroll() {
+      try {
+        var resp = await fetch("/bankroll");
+        if (resp.status === 404) {
+          initSection.classList.remove("hidden");
+          existingSection.classList.add("hidden");
+        } else if (!resp.ok) {
+          showError("Não foi possível carregar a banca.");
+        } else {
+          var bankroll = await resp.json();
+          initSection.classList.add("hidden");
+          existingSection.classList.remove("hidden");
+          renderBankroll(bankroll);
+        }
+      } catch (err) {
+        showError("Erro de conexão ao carregar a banca.");
+      }
+    }
+
+    document.getElementById("init-form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      errorBanner.classList.add("hidden");
+
+      var payload = {
+        initial_amount: parseFloat(document.getElementById("init-amount").value),
+        unit_percent: parseFloat(document.getElementById("init-unit-percent").value),
+      };
+      var stopDaily = document.getElementById("init-stop-daily").value;
+      var stopWeekly = document.getElementById("init-stop-weekly").value;
+      payload.stop_daily_percent = stopDaily === "" ? null : parseFloat(stopDaily);
+      payload.stop_weekly_percent = stopWeekly === "" ? null : parseFloat(stopWeekly);
+
+      try {
+        var resp = await fetch("/bankroll/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showError(errBody.detail || "Não foi possível criar a banca.");
+          return;
+        }
+        await loadBankroll();
+      } catch (err) {
+        showError("Erro de conexão ao criar a banca.");
+      }
+    });
+
+    document.getElementById("adjust-form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      errorBanner.classList.add("hidden");
+      var successMsg = document.getElementById("adjust-success");
+      successMsg.classList.add("hidden");
+
+      var payload = {
+        amount: parseFloat(document.getElementById("adjust-amount").value),
+        note: document.getElementById("adjust-note").value,
+      };
+
+      try {
+        var resp = await fetch("/bankroll/adjust", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          var errBody = await resp.json().catch(function () { return {}; });
+          showError(errBody.detail || "Não foi possível registrar o ajuste.");
+          return;
+        }
+        var bankroll = await resp.json();
+        renderBankroll(bankroll);
+        document.getElementById("adjust-form").reset();
+        successMsg.textContent = "Ajuste registrado com sucesso. Novo saldo: " + formatBRL(bankroll.current_amount);
+        successMsg.classList.remove("hidden");
+      } catch (err) {
+        showError("Erro de conexão ao registrar o ajuste.");
+      }
+    });
+
+    loadBankroll();
+  })();
+</script>
+{% endblock %}
