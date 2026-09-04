@@ -20,6 +20,7 @@ from app.services.odds_service import (
     get_api_keys,
     add_manual_odds,
     get_cached_odds,
+    get_remaining_credits,
     refresh_cache_from_api,
 )
 
@@ -47,6 +48,22 @@ def list_cached_odds(db: Session = Depends(get_db)):
     ordenadas por `odds_decimal` ASC (menor odd = maior probabilidade
     implícita primeiro)."""
     return get_cached_odds(db)
+
+
+@router.get("/credits")
+def get_credits():
+    """Consulta quantos créditos restam nas chaves da The Odds API
+    configuradas (`ODDS_API_KEY`/`ODDS_API_KEYS`), SEM gastar nenhum
+    crédito — usa `GET /v4/sports`, que a documentação oficial afirma
+    explicitamente não contar no limite de uso. Usado pelo painel pra
+    mostrar o consumo a qualquer momento, sem precisar disparar um refresh
+    completo (que aí sim gasta créditos de verdade)."""
+    keys = get_api_keys()
+    return {
+        "configured": bool(keys),
+        "num_keys": len(keys),
+        "remaining": get_remaining_credits(keys) if keys else None,
+    }
 
 
 @router.post("/refresh")

@@ -92,6 +92,7 @@
 <div class="card">
   <div class="odds-live-toolbar">
     <button type="button" id="refresh-odds-btn">Atualizar via API</button>
+    <span id="odds-credits-indicator" class="text-muted hidden"></span>
     <span id="odds-live-summary" class="odds-live-summary"></span>
   </div>
   <p id="refresh-odds-message" class="banner banner-info hidden"></p>
@@ -268,6 +269,7 @@
       msg.textContent = body.message || "Não foi possível atualizar as odds.";
       msg.classList.remove("hidden");
       await loadLiveOdds();
+      await loadCreditsIndicator();
     } catch (err) {
       msg.textContent = "Erro de conexão ao atualizar as odds.";
       msg.classList.remove("hidden");
@@ -276,7 +278,31 @@
     }
   });
 
+  // Mostra quantos créditos restam nas chaves da The Odds API configuradas
+  // (soma todas, se houver mais de uma) — consulta GRÁTIS (não gasta cota),
+  // pra dar visibilidade sem precisar clicar em "Atualizar via API".
+  async function loadCreditsIndicator() {
+    var el = document.getElementById("odds-credits-indicator");
+    try {
+      var resp = await fetch("/odds/credits");
+      if (!resp.ok) return;
+      var data = await resp.json();
+      if (!data.configured) {
+        el.textContent = "Nenhuma chave da API configurada";
+      } else if (data.remaining == null) {
+        el.textContent = "Não foi possível consultar os créditos agora";
+      } else {
+        var keysLabel = data.num_keys > 1 ? " (" + data.num_keys + " chaves)" : "";
+        el.textContent = data.remaining + " créditos restantes este mês" + keysLabel;
+      }
+      el.classList.remove("hidden");
+    } catch (err) {
+      // Falha silenciosa — é só um indicador informativo.
+    }
+  }
+
   loadLiveOdds();
+  loadCreditsIndicator();
 
   (async function () {
     var noBankrollMsg = document.getElementById("no-bankroll-message");
