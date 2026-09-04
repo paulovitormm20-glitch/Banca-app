@@ -11,14 +11,13 @@ calculadas por `app.services.generator_service`, não aqui.
 
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.schemas import OddsCacheOut, OddsManualCreate
 from app.services.odds_service import (
+    get_api_keys,
     add_manual_odds,
     get_cached_odds,
     refresh_cache_from_api,
@@ -63,21 +62,21 @@ def refresh_odds(
     silenciosamente ignorado e a atualização sempre buscava as 7 ligas da
     whitelist inteira, gastando muito mais créditos da API do que o pedido.
 
-    Se `ODDS_API_KEY` não estiver configurada, `refresh_cache_from_api`
-    retorna o resumo zerado — nesse caso respondemos com uma mensagem
-    amigável explicando que a entrada manual continua disponível em
-    `/odds`. Caso contrário, devolvemos quantas pernas são novas e quantas
-    já existiam e tiveram a odd atualizada (com a contagem de quantas
-    caíram/subiram/ficaram iguais), para alimentar o indicador de "odds ao
-    vivo" do painel.
+    Se nenhuma chave estiver configurada (`ODDS_API_KEY` ou `ODDS_API_KEYS`),
+    `refresh_cache_from_api` retorna o resumo zerado — nesse caso
+    respondemos com uma mensagem amigável explicando que a entrada manual
+    continua disponível em `/odds`. Caso contrário, devolvemos quantas
+    pernas são novas e quantas já existiam e tiveram a odd atualizada (com a
+    contagem de quantas caíram/subiram/ficaram iguais), para alimentar o
+    indicador de "odds ao vivo" do painel.
     """
     summary = refresh_cache_from_api(db, leagues)
     touched = summary["new"] + summary["updated"]
 
-    if touched == 0 and not os.environ.get("ODDS_API_KEY"):
+    if touched == 0 and not get_api_keys():
         return {
             **summary,
-            "message": "ODDS_API_KEY não configurada — use entrada manual em /odds ou no painel.",
+            "message": "Nenhuma chave da The Odds API configurada — use entrada manual em /odds ou no painel.",
         }
 
     parts = []

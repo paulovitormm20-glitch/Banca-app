@@ -86,6 +86,11 @@ fluxo de "você aposta manualmente, depois volta e registra o resultado".
   endpoint por-jogo — bem mais caro em créditos, por isso limitado aos
   próximos jogos em vez de todos de uma vez). A mensagem do botão
   "Atualizar via API" mostra quantos créditos ainda restam no mês.
+- Suporta **várias contas gratuitas da The Odds API ao mesmo tempo**: defina
+  `ODDS_API_KEYS` no `.env` com as chaves separadas por vírgula (em vez de
+  `ODDS_API_KEY`, com uma só). O sistema soma a cota de todas e troca de uma
+  pra outra sozinho quando uma esgota (ou fica inválida), sem precisar
+  reiniciar nem editar nada manualmente.
 - Cada odd é validada antes de ser salva: uma odd decimal nunca pode ser
   menor que 1.0 (seria matematicamente impossível). Isso pegou um bug real
   na fórmula de derivação de dupla chance quando o favorito era muito forte

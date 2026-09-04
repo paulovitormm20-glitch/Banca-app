@@ -50,9 +50,112 @@ EXTRA_MARKETS = "btts,double_chance,alternate_totals_corners,alternate_totals_ca
 
 
 class OddsApiNotConfigured(Exception):
-    """Levantada quando `fetch_from_odds_api` é chamada sem `ODDS_API_KEY`
-    definida no ambiente. Não é um erro grave: o sistema funciona 100% com
-    entrada manual de odds sem essa variável configurada."""
+    """Levantada quando nenhuma chave da The Odds API está configurada
+    (`ODDS_API_KEY` ou `ODDS_API_KEYS`). Não é um erro grave: o sistema
+    funciona 100% com entrada manual de odds sem nenhuma delas configurada."""
+
+
+# Índice (em memória do processo) de qual chave configurada tentar primeiro
+# na próxima chamada — ver `_request_with_key_rotation`.
+_current_key_index = 0
+
+
+def get_api_keys() -> list[str]:
+    """Lê as chaves da The Odds API configuradas no ambiente:
+
+    - `ODDS_API_KEYS`: várias chaves separadas por vírgula — permite juntar
+      várias contas gratuitas (500 créditos/mês cada) num só "pool" de cota,
+      trocando de uma pra outra sozinho quando uma esgota (ver
+      `_request_with_key_rotation`).
+    - `ODDS_API_KEY`: uma chave só (formato original, continua funcionando
+      normalmente se `ODDS_API_KEYS` não estiver definida).
+
+    Retorna lista vazia se nenhuma das duas estiver configurada.
+    """
+    multi = os.environ.get("ODDS_API_KEYS")
+    if multi:
+        keys = [k.strip() for k in multi.split(",") if k.strip()]
+        if keys:
+            return keys
+    single = os.environ.get("ODDS_API_KEY")
+    return [single] if single else []
+
+
+def _request_with_key_rotation(url: str, params: dict, timeout: int = 10) -> "requests.Response":
+    """Faz um `GET` tentando cada chave configurada (`get_api_keys`) em
+    ordem, começando pela última que funcionou (`_current_key_index`,
+    memória deste processo) — assim que uma chave esgota a cota mensal (ou
+    fica inválida), a próxima chamada já tenta a seguinte automaticamente,
+    sem precisar reiniciar nada nem trocar `.env` manualmente.
+
+    Um status 401/403/429 é tratado como "essa chave não serve agora" (cota
+    esgotada, chave inválida ou revogada) e tenta a próxima. Qualquer outro
+    erro (ex.: 422 de mercado inválido) não tem nada a ver com QUAL chave
+    foi usada, então não adianta trocar — propaga na hora.
+
+    Levanta `OddsApiNotConfigured` se não houver nenhuma chave configurada,
+    ou a última exceção/erro HTTP enfrentado se TODAS as chaves falharem.
+    """
+    global _current_key_index
+    keys = get_api_keys()
+    if not keys:
+        raise OddsApiNotConfigured(
+            "Nenhuma chave da The Odds API configurada (ODDS_API_KEY ou "
+            "ODDS_API_KEYS). Configure no arquivo .env para usar a "
+            "integração, ou continue usando a entrada manual de odds em /odds."
+        )
+
+    last_error: Exception | None = None
+    for offset in range(len(keys)):
+        idx = (_current_key_index + offset) % len(keys)
+        key = keys[idx]
+        try:
+            response = requests.get(url, params={**params, "apiKey": key}, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+        if response.status_code == 200:
+            _current_key_index = idx  # próxima chamada já começa tentando esta
+            return response
+        if response.status_code in (401, 403, 429):
+            logger.warning(
+                "Chave da The Odds API #%d (de %d) retornou status %d — "
+                "tentando a próxima chave configurada.",
+                idx + 1, len(keys), response.status_code,
+            )
+            last_error = requests.HTTPError(
+                f"{response.status_code}: {response.text[:200]}", response=response
+            )
+            continue
+        response.raise_for_status()  # outro tipo de erro — não é sobre a chave, propaga
+
+    raise last_error or Exception("Todas as chaves da The Odds API configuradas falharam.")
+
+
+def get_remaining_credits(api_keys: list[str] | None = None) -> int | None:
+    """Soma quantos créditos ainda restam somando TODAS as chaves
+    configuradas (não só a que está ativa no momento) — dá a visão real de
+    quanto sobra no pool inteiro quando há mais de uma chave.
+
+    Usa o endpoint `GET /v4/sports` pra cada chave, que a documentação
+    oficial afirma explicitamente NÃO contar no limite de uso — essa
+    checagem é grátis. Retorna `None` se nenhuma chave estiver configurada
+    ou todas as consultas falharem — isso é só informativo, nunca deve
+    quebrar um refresh que já funcionou."""
+    keys = api_keys if api_keys is not None else get_api_keys()
+    if not keys:
+        return None
+
+    total = 0
+    any_success = False
+    for key in keys:
+        try:
+            response = requests.get(SPORTS_URL, params={"apiKey": key}, timeout=10)
+            total += int(response.headers.get("x-requests-remaining"))
+            any_success = True
+        except Exception:  # noqa: BLE001 - puramente informativo, nunca crítico
+            continue
+    return total if any_success else None
 
 
 def _parse_commence_time(raw: str | None) -> datetime | None:
@@ -63,21 +166,6 @@ def _parse_commence_time(raw: str | None) -> datetime | None:
     try:
         return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
-        return None
-
-
-def get_remaining_credits(api_key: str) -> int | None:
-    """Consulta quantos créditos ainda restam no plano da The Odds API.
-
-    Usa o endpoint `GET /v4/sports`, que a documentação oficial afirma
-    explicitamente NÃO contar no limite de uso — essa checagem é grátis.
-    Retorna `None` se a consulta falhar por qualquer motivo (rede, chave
-    inválida) — isso é só informativo para o usuário, nunca deve quebrar um
-    refresh que já funcionou."""
-    try:
-        response = requests.get(SPORTS_URL, params={"apiKey": api_key}, timeout=10)
-        return int(response.headers.get("x-requests-remaining"))
-    except Exception:  # noqa: BLE001 - puramente informativo, nunca crítico
         return None
 
 
@@ -282,18 +370,20 @@ def fetch_from_odds_api(leagues: list[str]) -> list[dict]:
     Busca odds cruas na The Odds API (https://the-odds-api.com/) para cada
     liga informada, uma requisição por liga.
 
-    Só deve ser chamada se a env var `ODDS_API_KEY` estiver definida; caso
+    Só deve ser chamada se houver ao menos uma chave configurada
+    (`ODDS_API_KEY` ou `ODDS_API_KEYS` — ver `get_api_keys`); caso
     contrário levanta `OddsApiNotConfigured` (quem chamou — normalmente
     `refresh_cache_from_api` — decide a mensagem amigável para o usuário).
-    Se estiver definida, faz `requests.get` em
+    Faz `requests.get` via `_request_with_key_rotation` em
     `https://api.the-odds-api.com/v4/sports/{sport_key}/odds` usando
     `LEAGUE_TO_SPORT_KEY` para mapear liga -> sport_key, com params
-    `apiKey`, `regions=eu`, `markets=h2h,totals`.
+    `regions=eu`, `markets=h2h,totals` (a chave é escolhida automaticamente
+    entre as configuradas, trocando sozinha se uma esgotar a cota).
 
     Cada liga é envolvida em seu próprio try/except: se a requisição falhar
-    (rede, chave inválida, liga sem mercado disponível no plano atual) ou a
-    liga não tiver `sport_key` mapeado, isso é logado e a liga é pulada —
-    NUNCA quebra a função inteira. Retorna a lista de dicts crus devolvidos
+    (rede, todas as chaves esgotadas, liga sem mercado disponível no plano
+    atual) ou a liga não tiver `sport_key` mapeado, isso é logado e a liga é
+    pulada — NUNCA quebra a função inteira. Retorna a lista de dicts crus devolvidos
     pela API (cada dict recebe uma chave extra `_league` com o nome da liga
     no nosso sistema, para facilitar o parsing em `refresh_cache_from_api`).
 
@@ -313,12 +403,12 @@ def fetch_from_odds_api(leagues: list[str]) -> list[dict]:
       forma confiável (é um mercado de nicho, normalmente só em provedores
       pagos especializados) — continuam dependendo de entrada manual.
     """
-    api_key = os.environ.get("ODDS_API_KEY")
-    if not api_key:
+    if not get_api_keys():
         raise OddsApiNotConfigured(
-            "ODDS_API_KEY não está definida no ambiente. Configure-a no "
-            "arquivo .env para usar a integração com a The Odds API, ou "
-            "continue usando a entrada manual de odds em /odds."
+            "Nenhuma chave da The Odds API configurada (ODDS_API_KEY ou "
+            "ODDS_API_KEYS). Configure no arquivo .env para usar a "
+            "integração com a The Odds API, ou continue usando a entrada "
+            "manual de odds em /odds."
         )
 
     raw_events: list[dict] = []
@@ -332,16 +422,7 @@ def fetch_from_odds_api(leagues: list[str]) -> list[dict]:
             continue
         try:
             url = ODDS_API_BASE_URL.format(sport_key=sport_key)
-            response = requests.get(
-                url,
-                params={
-                    "apiKey": api_key,
-                    "regions": "eu",
-                    "markets": "h2h,totals",
-                },
-                timeout=10,
-            )
-            response.raise_for_status()
+            response = _request_with_key_rotation(url, {"regions": "eu", "markets": "h2h,totals"})
             events = response.json()
             if isinstance(events, list):
                 for event in events:
@@ -351,8 +432,8 @@ def fetch_from_odds_api(leagues: list[str]) -> list[dict]:
         except Exception:  # noqa: BLE001 - uma liga com problema nunca derruba as outras
             logger.exception(
                 "Falha ao buscar odds da The Odds API para a liga '%s' "
-                "(rede, chave inválida ou mercado indisponível no plano "
-                "atual). Pulando essa liga.",
+                "(rede, todas as chaves esgotadas/inválidas, ou mercado "
+                "indisponível no plano atual). Pulando essa liga.",
                 league,
             )
             continue
@@ -404,7 +485,6 @@ def _record_api_odds(
 
 def _apply_extra_markets(
     event: dict,
-    api_key: str,
     keep_best_fn,
 ) -> None:
     """
@@ -414,6 +494,9 @@ def _apply_extra_markets(
     endpoint em lote (cada chamada custa ~1 crédito por mercado retornado).
     Por isso só é chamada para os `EXTRA_MARKETS_PER_REFRESH` jogos mais
     próximos (ver `refresh_cache_from_api`), nunca para todos de uma vez.
+
+    A chave usada é escolhida automaticamente por `_request_with_key_rotation`
+    entre as configuradas (troca sozinha se uma esgotar a cota).
 
     Envolvida em try/except: falha de rede ou evento sem mercados extras
     disponíveis é logada e ignorada, nunca derruba o restante do refresh.
@@ -429,12 +512,10 @@ def _apply_extra_markets(
     event_start = _parse_commence_time(event.get("commence_time"))
 
     try:
-        response = requests.get(
+        response = _request_with_key_rotation(
             EVENT_ODDS_URL.format(sport_key=sport_key, event_id=event_id),
-            params={"apiKey": api_key, "regions": "eu", "markets": EXTRA_MARKETS},
-            timeout=10,
+            {"regions": "eu", "markets": EXTRA_MARKETS},
         )
-        response.raise_for_status()
         data = response.json()
     except Exception:  # noqa: BLE001 - um evento com problema nunca derruba os outros
         logger.exception(
@@ -547,13 +628,14 @@ def refresh_cache_from_api(db: Session, leagues: list[str] | None = None) -> dic
     indicador de "odds ao vivo" do painel e deixar claro quanto sobrou da
     cota mensal.
 
-    Se `ODDS_API_KEY` não estiver configurada, retorna o resumo zerado
-    silenciosamente (sem levantar exceção) — o endpoint `/odds/refresh` é
-    quem decide a mensagem amigável a mostrar ao usuário nesse caso.
+    Se nenhuma chave estiver configurada (`ODDS_API_KEY`/`ODDS_API_KEYS`),
+    retorna o resumo zerado silenciosamente (sem levantar exceção) — o
+    endpoint `/odds/refresh` é quem decide a mensagem amigável a mostrar ao
+    usuário nesse caso.
     """
     summary = {"new": 0, "updated": 0, "down": 0, "up": 0, "same": 0, "requests_remaining": None}
     target_leagues = leagues if leagues else list(WHITELIST_LEAGUES)
-    api_key = os.environ.get("ODDS_API_KEY")
+    api_keys = get_api_keys()
 
     try:
         raw_events = fetch_from_odds_api(target_leagues)
@@ -631,14 +713,14 @@ def refresh_cache_from_api(db: Session, leagues: list[str] | None = None) -> dic
                             key = (league, event_name, "double_chance_favorite", f"{favorite_label} ou empate")
                             _keep_best(key, 1.0 / fair_combined_prob, event_start)
 
-    if api_key:
+    if api_keys:
         upcoming = [
             e for e in raw_events
             if e.get("_league") in WHITELIST_LEAGUES and e.get("commence_time")
         ]
         upcoming.sort(key=lambda e: e["commence_time"])
         for event in upcoming[:EXTRA_MARKETS_PER_REFRESH]:
-            _apply_extra_markets(event, api_key, _keep_best)
+            _apply_extra_markets(event, _keep_best)
 
     touched = False
     for (league, event_name, market_type, selection_description), data in best.items():
@@ -653,7 +735,7 @@ def refresh_cache_from_api(db: Session, leagues: list[str] | None = None) -> dic
     if touched:
         db.commit()
 
-    if api_key:
-        summary["requests_remaining"] = get_remaining_credits(api_key)
+    if api_keys:
+        summary["requests_remaining"] = get_remaining_credits(api_keys)
 
     return summary
